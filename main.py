@@ -26,7 +26,7 @@ def save_vocaroo_link(vocaroo_link,output_dir):
         http://vocaroo.com/i/s0xtktsit8rE
     """
     logging.debug("vocaroo_link: "+repr(vocaroo_link))
-    logging.debug("output_dir: "+repr(output_dir))
+    #logging.debug("output_dir: "+repr(output_dir))
 
     # Grab the ID of the vocaroo
     vocaroo_id_search = re.search("""vocaroo.com/i/(\w+)""", vocaroo_link, re.IGNORECASE)
@@ -45,7 +45,7 @@ def save_vocaroo_link(vocaroo_link,output_dir):
 
     # Generate download link
     # http://vocaroo.com/media_command.php?media=s0xtktsit8rE&command=download_mp3
-    download_url = "http://vocaroo.com/media_command.php?media="+vocaroo_id+"&command=download_mp3"
+    #download_url = "http://vocaroo.com/media_command.php?media="+vocaroo_id+"&command=download_mp3"
     logging.debug("download_url: "+repr(download_url))
 
     # Try saving download link
@@ -96,16 +96,38 @@ def find_vocaroo_links_in_db(session,start_id,stop_id,output_dir):
 def scan_db(session,output_dir,start_id=0,stop_id=None,step_number=1000):
     """Scan over a DB table of arbitrary size and process all rows"""
     logging.info("Scanning DB...")
+
+    # Find lowest ID in DB
+    lowest_id_query = sqlalchemy.select([Board]).\
+        order_by(sqlalchemy.asc(Board.doc_id)).\
+        limit(1)
+    lowest_id_rows = session.execute(lowest_id_query)
+    lowest_id_row = lowest_id_rows.fetchone()
+    lowest_id_in_table = lowest_id_row["doc_id"]
+    logging.info("lowest_id_in_table: "+repr(lowest_id_in_table))
+
+    # Find highest ID in DB
+    highest_id_query = sqlalchemy.select([Board]).\
+        order_by(sqlalchemy.desc(Board.doc_id)).\
+        limit(1)
+    highest_id_rows = session.execute(highest_id_query)
+    highest_id_row = highest_id_rows.fetchone()
+    highest_id_in_table = highest_id_row["doc_id"]
+    logging.info("highest_id_in_table: "+repr(highest_id_in_table))
+
+    # If stop_id isn't set, use the highest currently existing ID in the table
     if stop_id is None:
-        # Find highest ID in DB and set stop_id to that
-        highest_id_query = sqlalchemy.select([Board]).\
-            order_by(sqlalchemy.desc(Board.doc_id)).\
-            limit(1)
-        highest_id_rows = session.execute(highest_id_query)
-        highest_id_row = highest_id_rows.fetchone()
-        highest_id_in_table = highest_id_row["doc_id"]
-        logging.info("highest_id_in_table: "+repr(highest_id_in_table))
         stop_id = highest_id_in_table
+
+    # Prevent the start_id from being too low
+    if start_id < lowest_id_in_table:
+        logging.warning("Start number was lower than the lowest ID in the table!")
+        if start_id <= stop_id:
+            start_id = lowest_id_in_table
+        else:
+            logging.error("Start ID was greater than stop ID!")
+            assert(False)
+            return
 
     # Setup id number values for initial group
     low_id = start_id
@@ -141,7 +163,7 @@ def find_vocaroo_links_in_string(to_scan):
     # http://vocaroo.com/i/s0xtktsit8rE
     # (?:https?://)?(?:www\.)?vocaroo.com/i/\w+
     vocaroo_links = re.findall("""(?:https?://)?(?:www\.)?vocaroo.com/i/\w+""", to_scan, re.DOTALL)
-    logging.debug("vocaroo_links: "+repr(vocaroo_links))
+    #logging.debug("vocaroo_links: "+repr(vocaroo_links))
     return vocaroo_links
 
 
@@ -163,7 +185,7 @@ def debug():
 
     scan_db(
         session=session,
-        output_dir=os.path.join("debug", "output"),
+        output_dir=os.path.join("output"),
         start_id=0,
         stop_id=None,
         step_number=1000
@@ -171,10 +193,20 @@ def debug():
     return
 
 
+
 def main():
     try:
         setup_logging(log_file_path=os.path.join("debug","asagi_vocaroo_grabber-log.txt"))
-        debug()
+
+        session = sql_functions.connect_to_db()
+        scan_db(
+            session=session,
+            output_dir = config.output_dir,
+            start_id = config.start_id,
+            stop_id = config.stop_id,
+            step_number = config.step_number
+            )
+
     except Exception, e:# Log fatal exceptions
         logging.critical("Unhandled exception!")
         logging.exception(e)
