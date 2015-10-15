@@ -11,13 +11,16 @@
 import logging
 import re
 import os
+import sqlalchemy# Database library
 
 import config # Settings and configuration
 import lockfiles # MutEx lockfiles
 from utils import * # General utility functions
+import sql_functions# Database interaction
+from tables import Board# Table definitions
 
 
-def save_vocaroo(vocaroo_link,output_dir):
+def save_vocaroo_link(vocaroo_link,output_dir):
     """Take a vocaroo link and save it
     example input:
         http://vocaroo.com/i/s0xtktsit8rE
@@ -25,6 +28,7 @@ def save_vocaroo(vocaroo_link,output_dir):
     logging.debug("vocaroo_link: "+repr(vocaroo_link))
     logging.debug("output_dir: "+repr(output_dir))
 
+    # Grab the ID of the vocaroo
     vocaroo_id_search = re.search("""vocaroo.com/i/(\w+)""", vocaroo_link, re.IGNORECASE)
     vocaroo_id = vocaroo_id_search.group(1)
     logging.debug("vocaroo_id: "+repr(vocaroo_id))
@@ -55,22 +59,116 @@ def save_vocaroo(vocaroo_link,output_dir):
     return
 
 
-def find_vocaroo_links_in_db(session,start_id,stop_id):
+def find_vocaroo_links_in_db(session,start_id,stop_id,output_dir):
     """Scan through an asagi database and find vocaroo links.
     return a list of links"""
+    logging.info("Starting to process posts from the DB. ("+repr(start_id)+" to "+repr(stop_id)+")")
+    # Request the posts from the DB
+    posts_query = sqlalchemy.select([Board]).\
+        where(Board.doc_id >= start_id).\
+        where(Board.doc_id <= stop_id)
+    post_rows = session.execute(posts_query)
+
+    # Scan each post requested, downloading any found links
+    post_counter = 0
+    for post_row in post_rows:
+        post_counter += 1
+        logging.debug("post_counter: "+repr(post_counter))
+        comment = post_row["comment"]
+        logging.debug("comment: "+repr(comment))
+
+        # Find links
+        vocaroo_links = find_vocaroo_links_in_string(to_scan=comment)
+        number_of_vocaroo_links_found = len(vocaroo_links)
+        logging.debug("vocaroo_links: "+repr(vocaroo_links))
+
+        # Save links
+        for vocaroo_link in vocaroo_links:
+            save_vocaroo_link(
+                vocaroo_link,
+                output_dir,
+                )
+        continue
+    logging.info("Finished processing this batch of posts. ("+repr(start_id)+" to "+repr(stop_id)+")")
+    return number_of_vocaroo_links_found
+
+
+def scan_db(session,output_dir,start_id=0,stop_id=None,step_number=1000):
+    """Scan over a DB table of arbitrary size and process all rows"""
+    logging.info("Scanning DB...")
+    if stop_id is None:
+        # Find highest ID in DB and set stop_id to that
+        highest_id_query = sqlalchemy.select([Board]).\
+            order_by(sqlalchemy.desc(Board.doc_id)).\
+            limit(1)
+        highest_id_rows = session.execute(highest_id_query)
+        highest_id_row = highest_id_rows.fetchone()
+        highest_id_in_table = highest_id_row["doc_id"]
+        logging.info("highest_id_in_table: "+repr(highest_id_in_table))
+        stop_id = highest_id_in_table
+
+    # Setup id number values for initial group
+    low_id = start_id
+    high_id = start_id +step_number
+
+    total_number_of_vocaroo_links_found = 0
+    # Loop to process posts in batches to keep memory use lower
+    while low_id <= stop_id:
+        logging.debug("low_id: "+repr(low_id)+" , high_id:"+repr(high_id))
+        # Process this group of rows
+        number_of_vocaroo_links_found = find_vocaroo_links_in_db(
+            session,
+            start_id,
+            stop_id,
+            output_dir
+            )
+        total_number_of_vocaroo_links_found += number_of_vocaroo_links_found
+        # Increase ID numbers
+        low_id = high_id
+        high_id += step_number
+        continue
+
+    logging.info("total_number_of_vocaroo_links_found: "+repr(total_number_of_vocaroo_links_found))
+    logging.info("Finished scanning DB")
+    return total_number_of_vocaroo_links_found
+
+
 
 
 def find_vocaroo_links_in_string(to_scan):
     """Take a string, such as an archived post's comment,
      and find vocaroo links in it if there are any"""
+    # http://vocaroo.com/i/s0xtktsit8rE
+    # (?:https?://)?(?:www\.)?vocaroo.com/i/\w+
+    vocaroo_links = re.findall("""(?:https?://)?(?:www\.)?vocaroo.com/i/\w+""", to_scan, re.DOTALL)
+    logging.debug("vocaroo_links: "+repr(vocaroo_links))
+    return vocaroo_links
 
 
 def debug():
     """where stuff is called to debug and test"""
-    save_vocaroo(
-        vocaroo_link="http://vocaroo.com/i/s0xtktsit8rE",
+##    save_vocaroo_link(
+##        vocaroo_link="http://vocaroo.com/i/s0xtktsit8rE",
+##        output_dir=os.path.join("debug", "output"),
+##        )
+
+    session = sql_functions.connect_to_db()
+
+##    find_vocaroo_links_in_db(
+##        session=session,
+##        start_id=0,
+##        stop_id=1000,
+##        output_dir=os.path.join("debug", "output")
+##        )
+
+    scan_db(
+        session=session,
         output_dir=os.path.join("debug", "output"),
+        start_id=0,
+        stop_id=None,
+        step_number=1000
         )
+    return
 
 
 def main():
