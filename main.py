@@ -76,6 +76,9 @@ def find_vocaroo_links_in_db(session,start_id,stop_id,output_dir):
         logging.debug("post_counter: "+repr(post_counter))
         comment = post_row["comment"]
         logging.debug("comment: "+repr(comment))
+        if comment is None:# Skip post if no comment
+            continue
+        assert_is_string(comment)
 
         # Find links
         vocaroo_links = find_vocaroo_links_in_string(to_scan=comment)
@@ -139,10 +142,10 @@ def scan_db(session,output_dir,start_id=0,stop_id=None,step_number=1000):
         logging.debug("low_id: "+repr(low_id)+" , high_id:"+repr(high_id))
         # Process this group of rows
         number_of_vocaroo_links_found = find_vocaroo_links_in_db(
-            session,
-            start_id,
-            stop_id,
-            output_dir
+            session=session,
+            start_id=low_id,
+            stop_id=high_id,
+            output_dir=output_dir,
             )
         total_number_of_vocaroo_links_found += number_of_vocaroo_links_found
         # Increase ID numbers
